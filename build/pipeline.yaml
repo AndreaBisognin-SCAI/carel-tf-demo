@@ -1,0 +1,99 @@
+# Starter pipeline
+# Start with a minimal pipeline that you can customize to build and deploy your code.
+# Add steps that build, run tests, deploy, and more:
+# https://aka.ms/yaml
+
+trigger:
+- dev
+
+pool: default
+
+variables:
+  - group: infra
+  - name: terraform-version
+    value: 1.4.2
+
+stages:
+  - stage: Plan
+    jobs:
+      - job: Plan
+        steps:
+        - task: charleszipp.azure-pipelines-tasks-terraform.azure-pipelines-tasks-terraform-installer.TerraformInstaller@0
+          displayName: install terraform
+          inputs:
+            terraformVersion: $(terraform-version)
+
+        - task: TerraformTaskV4@4
+          name: tf_init
+          displayName: terraform init
+          inputs:
+            provider: azurerm
+            command: init
+            backendServiceArm: $(DEPLOYER)
+            backendAzureRmResourceGroupName: $(TF_STATE_RG)
+            backendAzureRmStorageAccountName: $(TF_STATE_SA)
+            backendAzureRmContainerName:  $(TF_STATE_CONT)
+            backendAzureRmKey: $(TF_STATE_KEY)
+
+        - task: TerraformTaskV4@4
+          name: tf_plan
+          displayName: terraform plan
+          inputs:
+            provider: azurerm
+            command: plan
+            environmentServiceNameAzureRM: $(DEPLOYER)
+            commandOptions: -input=false -out=tfplan.out
+
+        - publish: $(System.DefaultWorkingDirectory)
+          condition: eq(variables['tf_plan.changesPresent'], 'true')
+          artifact: TerraformDirectory
+
+        - script: |
+            echo "No changes to apply"
+            exit 1
+          condition:  eq(variables['tf_plan.changesPresent'], 'false')
+
+  - stage: Apply
+    dependsOn: Plan
+    jobs:
+      # trunk-ignore(yamllint/empty-values)
+      - deployment:
+        environment: APPROVAL
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+              - download: none
+              - task: DownloadPipelineArtifact@2
+                displayName: Download Terraform Plan
+                inputs:
+                  buildType: current
+                  artifactName: TerraformDirectory
+                  path: $(System.DefaultWorkingDirectory)
+
+
+              - task: charleszipp.azure-pipelines-tasks-terraform.azure-pipelines-tasks-terraform-installer.TerraformInstaller@0
+                displayName: install terraform
+                inputs:
+                  terraformVersion: $(terraform-version)
+
+              - task: TerraformTaskV4@4
+                name: tf_init
+                displayName: terraform init
+                inputs:
+                  provider: azurerm
+                  command: init
+                  backendServiceArm: $(DEPLOYER)
+                  backendAzureRmResourceGroupName: $(TF_STATE_RG)
+                  backendAzureRmStorageAccountName: $(TF_STATE_SA)
+                  backendAzureRmContainerName: $(TF_STATE_CONT)
+                  backendAzureRmKey: $(TF_STATE_KEY)
+              - task: TerraformTaskV4@4
+                name: tf_apply
+                displayName: terraform apply
+                inputs:
+                  backendServiceArm: $(DEPLOYER)
+                  provider: azurerm
+                  command: apply
+                  environmentServiceNameAzureRM: $(DEPLOYER)
+                  commandOptions: -auto-approve tfplan.out

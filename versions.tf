@@ -11,10 +11,6 @@ terraform {
     }
   }
   backend "azurerm" {
-    resource_group_name  = "terraform"
-    storage_account_name = "scaiitectfstate"
-    container_name       = "puntonet1"
-    key                  = "terraform.tfstate"
   }
 }
 
